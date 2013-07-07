@@ -197,8 +197,8 @@ function plugin_trigger_check() {
   }
 }
 //Turns out you can't just do __FILE__ like it says in the wordpress codex!
-register_activation_hook(WP_PLUGIN_DIR.'/Orbital-Feed-Reader/orbital.php','orbital_activate');
+register_activation_hook(__FILE__,'orbital_activate');
 
-register_uninstall_hook(WP_PLUGIN_DIR.'/Orbital-Feed-Reader/orbital.php','orbital_uninstall_db');
+register_uninstall_hook(__FILE__,'orbital_uninstall_db');
 
 ?>
