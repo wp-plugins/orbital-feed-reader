@@ -1,17 +1,17 @@
 <?php
 /*
 * Plugin Name: Orbital Feed Reader
-* Plugin URI: http://mattkatz.github.com/orbital/
+* Plugin URI: http://mattkatz.github.com/Orbital-Feed-Reader/
 * Description:A voracious feed reader
-* Version: 0.1
+* Version: 0.1.1
 * Author: Matt Katz
 * Author URI: http://www.morelightmorelight.com
 * License: GPL2
 * */
-$page_title = "Voracious Reader";
-$menu_title = "CONSUME";
-$capability = 'edit_posts';
-$slug = 'orbital.php';
+global $orbital_slug;
+$orbital_slug = 'orbital.php';
+global $orbital_settings_slug;
+$orbital_settings_slug = 'orbital_plugin_settings';
 global $orbital_db_version ;
 $orbital_db_version = '0.1';
 global $orbital_db_version_opt_string;
@@ -59,17 +59,39 @@ function orbital_sample_data_check(){
 
 add_action('admin_menu', 'orbital_plugin_menu');
 function orbital_plugin_menu(){
+  //TODO should this be global? Probably not. 
+  global $orbital_slug;
+  global $orbital_settings_slug;
+
+  require_once 'backend.php';
+  $unread_count = OrbitalFeeds::get_unread_count();
+
+  $page_title = '('.$unread_count.') Orbital';
+  $menu_title = $page_title;
+  $capability = 'edit_posts';
   //We add the hook for our menu item on the main menu
-  $main = add_menu_page('orbital', 'Consume','edit_posts','orbital.php','generate_main_page');
+  $main = add_menu_page( $page_title, $menu_title, $capability, $orbital_slug, 'generate_main_page',plugins_url('img/satellite.svg',__FILE__));
+  //Settings page
+  $settings = add_submenu_page( $orbital_slug, 'Settings', 'Settings', $capability, $orbital_settings_slug, 'orbital_settings');
   //add hook for feed management page
   //TODO remove this. We don't need submenu pages now.
   //$feed_mgmt = add_submenu_page('orbital.php', 'Manage Feeds', 'Feeds', 'edit_posts','subscriptions_management','feed_management');
-  
-  
-   /* Using registered $page handle to hook script load */
+  /* Using registered $page handle to hook script load */
   add_action('admin_print_styles-' . $main, 'orbital_enqueue_scripts');
   add_action('admin_print_styles-' . $main, 'orbital_main_scripts');
   //add_action('admin_print_styles-' . $feed_mgmt, 'orbital_enqueue_scripts');
+
+}
+/* to style our SVG icon we need to enqueue one style to fix width */
+add_action('admin_head', 'orbital_icon_style');
+function orbital_icon_style(){
+  echo '<style>
+    #toplevel_page_orbital div.wp-menu-image img {
+      width:16px;
+    
+    }
+    </style>';
+
 
 }
 
@@ -93,6 +115,20 @@ function orbital_admin_init(){
   /* Register our stylesheet. */
   wp_register_style( 'orbitalcss', plugins_url('style.css', __FILE__) );
 
+  /* Register some settings for the settings menu */
+  register_setting( 'orbital-settings-group', 'orbital-setting' );
+  add_settings_section( 'section-one', 'Blog This Settings', 'section_one_callback',  'orbital-plugin-settings');
+  add_settings_field( 'field-one', 'I want to quote the whole article if there is no text selected', 'field_one_callback',   'orbital-plugin-settings', 'section-one' );
+  
+
+}
+function section_one_callback() {
+    echo 'How should the Blog This! button work?';
+}
+function field_one_callback() {
+    $settings = (array) get_option( 'orbital-setting' );
+    $quote_text = esc_attr($settings['quote-text']);
+    echo "<input type='checkbox' name='orbital-setting[quote-text]' value=1 ". checked( 1, $quote_text, false ) . " />";
 }
 
 // these are common to all of our pages
@@ -106,11 +142,13 @@ function orbital_enqueue_scripts()
   wp_enqueue_script('angular_controllers_script');
   wp_enqueue_script('scrollToEntry');
 
-  wp_localize_script( 'angular_controllers_script', 'get_url', array( 
+  wp_localize_script( 'angular_controllers_script', 'opts', array( 
     'ajaxurl' => admin_url( 'admin-ajax.php' ) ,
     // generate a nonce with a unique ID "myajax-post-comment-nonce"
     // so that you can check it later when an AJAX request is sent
     'nonce_a_donce' => wp_create_nonce( 'nonce_a_donce' ),
+    //our main settings
+    'settings' => (array) get_option('orbital-setting'),
   ) );
   //add our stylesheet
   wp_enqueue_style('orbitalcss');
@@ -124,9 +162,15 @@ function orbital_main_scripts()
   //here we set up hook like the shortcuts
 }
 
+/* This is the main orbital page with all the feed reading goodness */
 function generate_main_page()
 {
   require_once('mainwindow.php');
+}
+/* This is the settings page. */
+function orbital_settings()
+{
+  require_once 'settings.php';
 }
 
 function feed_management(){
@@ -196,7 +240,95 @@ function plugin_trigger_check() {
     exit;
   }
 }
-//Turns out you can't just do __FILE__ like it says in the wordpress codex!
+
+//Add settings page
+add_action( 'admin_menu', 'orbital_admin_menu' );
+function orbital_admin_menu() {
+  global $orbital_settings_slug;
+    add_options_page( 'Orbital', 'Orbital', 'manage_options', $orbital_settings_slug, 'orbital_options_page' );
+}
+function orbital_options_page() {
+  require_once "settings.php";
+}
+
+/**
+ * Adds a simple WordPress pointer to Settings menu
+ * Thanks to http://www.wpexplorer.com/making-themes-plugins-more-usable/
+ */
+ 
+function orbital_enqueue_pointer_script_style( $hook_suffix ) {
+ 
+  // Assume pointer shouldn't be shown
+  $enqueue_pointer_script_style = false;
+
+  // Get array list of dismissed pointers for current user and convert it to array
+  $dismissed_pointers = explode( ',', get_user_meta( get_current_user_id(), 'dismissed_wp_pointers', true ) );
+
+  // Check if our pointer is not among dismissed ones
+  if( !in_array( 'orbital_menu_pointer', $dismissed_pointers ) ) {
+    $enqueue_pointer_script_style = true;
+    
+    // Add footer scripts using callback function
+    add_action( 'admin_print_footer_scripts', 'orbital_pointer_print_scripts' );
+  }
+
+  // Enqueue pointer CSS and JS files, if needed
+  if( $enqueue_pointer_script_style ) {
+    wp_enqueue_style( 'wp-pointer' );
+    wp_enqueue_script( 'wp-pointer' );
+  }
+  
+}
+add_action( 'admin_enqueue_scripts', 'orbital_enqueue_pointer_script_style' );
+
+function orbital_pointer_print_scripts() {
+
+  $pointer_content  = "<h3>Your Orbital Feed Reader is installed here!</h3>";
+  $pointer_content .= "<p>See a count of all your unread items right here in the menu.</p>";
+  ?>
+  
+  <script type="text/javascript">
+  //<![CDATA[
+  jQuery(document).ready( function($) {
+    $('#toplevel_page_orbital').pointer({
+      content:    '<?php echo $pointer_content; ?>',
+      position:    {
+                edge:  'left', // arrow direction
+                align:  'center' // vertical alignment
+              },
+      pointerWidth:  350,
+      close:      function() {
+                $.post( ajaxurl, {
+                    pointer: 'orbital_menu_pointer', // pointer ID
+                    action: 'dismiss-wp-pointer'
+                });
+              }
+    }).pointer('open');
+  });
+  //]]>
+  </script>
+
+<?php
+} 
+
+/**
+ * Add action links in Plugins table
+ */
+ 
+add_filter( 'plugin_action_links_' . plugin_basename( __FILE__ ), 'orbital_plugin_action_links' );
+function orbital_plugin_action_links( $links ) {
+  global $orbital_settings_slug;
+
+	return array_merge(
+		array(
+			'settings' => '<a href="' . admin_url( "admin.php?page=$orbital_settings_slug" ) . '">' . __( 'Settings', 'ts-fab' ) . '</a>'
+		),
+		$links
+	);
+
+}
+
+
 register_activation_hook(__FILE__,'orbital_activate');
 
 register_uninstall_hook(__FILE__,'orbital_uninstall_db');
