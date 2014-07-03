@@ -30,6 +30,7 @@ if(!function_exists('_log')){
 class OrbitalFeeds {
 
   /* Method to save a feed
+   * OrbitalFeeds::save
    *   - check to see if there is a feed_id.
    *     - Yes means we are updating
    *       - Just update user_feeds
@@ -45,22 +46,13 @@ class OrbitalFeeds {
     $user_feeds = $wpdb->prefix.$tbl_prefix. "user_feeds ";
     $resp = new stdClass;
     $feed_id = '';
-    if(array_key_exists('feed_id', $feed) && $feed['feed_id']){
-    /*
-     //TODO NO IDEA WHY THIS DOESN'T WORK!
-    $ret = $wpdb->update(
-      $table_name,//the table
-      array(
-        'feed_url' => $feed_url,
-        'feed_name' => $feed_name,
-        'site_url' => $site_url,
-        'private' => $is_private,
-      ),//columns to update
-      array(//where filters
-        'id' =>$feed_id, //current feed
-        'owner'=>$current_user->ID //logged in user
-      )
-    );*/
+    $user_id = $current_user->ID;
+    if(isset($feed['owner']) && (current_user_can('install_plugin') || current_user_can('create_users'))){
+      //We are saving this feed for a SPECIFIC user!
+      //We must check to see if this is someone who has admin access to install plugins and such - in that case we should allow the user to save feeds for other users.
+      $user_id = $feed['owner'];
+    }
+    if(isset( $feed['feed_id'])){
       //we are updating.  just do an update on user_feeds
       $sql = "UPDATE $user_feeds
               SET feed_name = %s
@@ -68,7 +60,7 @@ class OrbitalFeeds {
               , private = %d
               WHERE id = %d
               AND owner = %d";
-      $sql = $wpdb->prepare($sql,$feed['feed_name'],$feed['site_url'],$feed['is_private'],$feed['feed_id'], $current_user->ID);
+      $sql = $wpdb->prepare($sql,$feed['feed_name'],$feed['site_url'],$feed['is_private'],$feed['feed_id'], $user_id);
       $resp->feed_updated = $wpdb->query($sql);
       if(false=== $resp->feed_updated ) {
         $resp->update_error = $wpdb->print_error();
@@ -103,7 +95,7 @@ class OrbitalFeeds {
         (feed_id, feed_name, site_url,owner, private)
          VALUES
          (%d,%s,%s,%d,%d)';
-      $sql = $wpdb->prepare($sql, $feed_id,  $feed['feed_name'],$feed['site_url'],$current_user->ID,$feed['is_private']);
+      $sql = $wpdb->prepare($sql, $feed_id,  $feed['feed_name'],$feed['site_url'],$user_id,$feed['is_private']);
       $resp->user_feed_inserted = $wpdb->query($sql);
       if(false=== $resp->user_feed_inserted){
         $resp->user_feeds_error = $wpdb->print_error();
@@ -119,9 +111,15 @@ class OrbitalFeeds {
     //We should always expect a feed_id at this point.
     OrbitalFeeds::saveFeedTags($feed);
 
+    /* we should associate the entries from the entries table
+     * with this user_feeds row throug the user_entries table
+     */
+
+
+
     //TODO this should be eliminated
     //$resp->sql = $sql;
-    $resp->user = $current_user->ID;
+    $resp->user = $user_id;
     $resp->feed_id = $feed['feed_id'];
     $resp->feed_url = $feed['feed_url'];
     $resp->site_url = $feed['site_url'];
@@ -130,6 +128,52 @@ class OrbitalFeeds {
     $resp->unread_count ="0";//TODO: A LIE. But it gets corrected quickly
     return $resp;
   }
+  /* OrbitalFeeds::link_old_entries
+   * 
+   * Method to grab entries that aren't 
+   * associated with a particular user_feed
+   * and correct that
+   */
+  static function link_old_entries($user_id)
+  {
+    global $wpdb;
+    global $tbl_prefix;
+    $entries = $wpdb->prefix.$tbl_prefix. "entries ";
+    $user_feeds = $wpdb->prefix.$tbl_prefix. "user_feeds ";
+    $user_entries = $wpdb->prefix.$tbl_prefix. "user_entries ";
+    $resp = new stdClass;
+    $sql = "
+      INSERT INTO $user_entries 
+        (entry_id
+        ,feed_id
+        ,orig_feed_id
+        ,owner_uid
+        ,marked
+        ,isRead
+        )
+      SELECT 
+       e.id AS entry_id
+      ,uf.id AS feed_id
+      ,uf.feed_id AS orig_feed_id
+      ,uf.owner AS owner_uid
+      ,0 AS marked
+      ,0 AS isRead
+      FROM $user_feeds uf
+      INNER JOIN $entries  e
+        ON e.feed_id = uf.feed_id
+      LEFT OUTER JOIN $user_entries ue
+       ON ue.feed_id = uf.id
+      WHERE uf.owner = %d 
+      AND ue.id IS NULL
+    ";
+    $sql = $wpdb->prepare($sql,$user_id );
+    $resp->entry_inserted = $wpdb->query($sql);
+    if(false=== $resp->entry_inserted){
+      $resp->entries_error = $wpdb->print_error();
+    }
+    return $resp;
+  }
+  
   /* OrbitalFeeds::saveFeedTags($feed);
    *
    * Method to save the tags for a feed
@@ -249,7 +293,7 @@ class OrbitalFeeds {
    * Method to list all feeds
    *   - Just return all feeds from user_feeds
    */
-  static function get(){
+  static function get($user_id){
     global $wpdb;
     global $tbl_prefix;
     global $current_user;
@@ -257,6 +301,10 @@ class OrbitalFeeds {
     $user_feeds = $wpdb->prefix.$tbl_prefix. "user_feeds ";
     $user_entries = $wpdb->prefix.$tbl_prefix. "user_entries ";
     $user_feed_tags = $wpdb->prefix.$tbl_prefix. "user_feed_tags ";
+    if(! $user_id)
+    { 
+      $user_id =  get_current_user_id(); 
+    }
     $tags = $wpdb->prefix.$tbl_prefix. "tags ";
     $sql = "
     SELECT 
@@ -284,7 +332,7 @@ class OrbitalFeeds {
         FROM $user_feeds AS u_feeds
         INNER JOIN $feeds AS feeds
           ON u_feeds.feed_id = feeds.id
-          AND u_feeds.owner =  $current_user->ID
+          AND u_feeds.owner =  $user_id
         LEFT OUTER JOIN $user_entries AS ue
           ON ue.feed_id=u_feeds.id
         GROUP BY 
@@ -343,82 +391,59 @@ class OrbitalFeeds {
    *   - Should delete the feed from feeds if there are no more user_feeds entries
    *   - then delete all entries for the feed.
    */
-  static function remove($feed_id){
+  static function remove($user_id = null, $feed_id=null){
     global $wpdb;
     global $tbl_prefix;
     global $current_user;
-    $current_user = wp_get_current_user();
-    
     $feeds = $wpdb->prefix.$tbl_prefix. "feeds";
     $user_feeds = $wpdb->prefix.$tbl_prefix. "user_feeds";
     $user_entries = $wpdb->prefix.$tbl_prefix. "user_entries ";
     $entries = $wpdb->prefix.$tbl_prefix. "entries";
 
-    $resp->user = $current_user->ID;
-    //$orig_feed_id
+    if(! isset($user_id)){
+      $current_user = wp_get_current_user();
+      $user_id = $current_user->ID;
+    }
+    $resp->user = $user_id;
+
+    $where = array('owner'=>$user_id);
+    if(isset($feed_id)){
+      $where['id'] = $feed_id;
+    }
+
     //User feeds
-    //Let's get the underling feed_id now
-    $sql = "
-      SELECT feed_id
-      FROM $user_feeds
-      WHERE owner = $current_user->ID
-        AND id = %d";
-    $orig_feed_id = $wpdb->get_var($wpdb->prepare($sql,$feed_id));
-
-    $sql = "
-      DELETE 
-      FROM $user_feeds 
-      WHERE owner = $current_user->ID 
-      AND id = %d";
-    $sql = $wpdb->prepare($sql,$feed_id);
-    if(false === $wpdb->query($sql)){
+    if(false === $wpdb->delete($user_feeds, $where,'%d')){
       $resp->uf_error = $wpdb->print_error();
+      _log($resp->uf_error);
     }
-    //delete all user_entries for current user
-    //TODO we should probably only link user_entries to user_feeds
-    $sql = "
-      DELETE 
-      FROM $user_entries 
-      WHERE owner_uid = $current_user->ID 
-      AND feed_id = %d";
-    $sql = $wpdb->prepare($sql,$feed_id);
-    if(false ===  $wpdb->query($sql)){
-      $resp->ue_error = $wpdb->print_error();
-    }
+    //clean up any feeds that don't have subscriptions from users
+    OrbitalFeeds::clean_feeds();
 
-    //was that the last person subscribed to the feed?
-    //if so, we should remove the feed and all entries
-    $sql = "
-      SELECT COUNT(*)
-      FROM $user_feeds
-      WHERE feed_id = %d";
-    $subscribers = $wpdb->get_var($wpdb->prepare($sql,$orig_feed_id));
-
-    if(0<= $subscribers){
-      $sql = "
-        DELETE
-        FROM $entries
-        WHERE feed_id = %d";
-      $sql = $wpdb->prepare($sql,$orig_feed_id);
-      if(false === $wpdb->query($sql)){
-        $resp->entries_error = $wpdb->print_error();
-      }
-
-      //TODO we are getting a weird blank error on delete for this
-      //Is that valid for postgres?  How can we just eliminate that error?
-      $sql = "
-        DELETE 
-        FROM $feeds
-        WHERE id = %d;";
-      $sql = $wpdb->prepare($sql,$orig_feed_id);
-      if(false === $wpdb->query($sql)){
-        $resp->feeds_error = $wpdb->print_error();
-      }
-    }
-
-    //$resp->result = $res;
+    //delete all user_entries for user
+    OrbitalEntries::unlink($user_id,$feed_id);
     $resp->feed_id = $feed_id;
     return $resp;
+  }
+
+
+  /* OrbitalFeeds::clean_feeds
+   * Remove any feeds that no one is currently subscribed to 
+   */
+  static function clean_feeds(){
+    global $wpdb;
+    global $tbl_prefix;
+    $feeds = $wpdb->prefix.$tbl_prefix. "feeds";
+    $user_feeds = $wpdb->prefix.$tbl_prefix. "user_feeds";
+    $sql = "
+      DELETE f
+      FROM $feeds f
+      LEFT OUTER JOIN $user_feeds uf
+        ON uf.feed_id = f.id
+      WHERE uf.id IS NULL
+      ";
+    if(false === $wpdb->query($sql)){
+      _log($wpdb->print_error());
+    }
   }
 
   /*
@@ -588,7 +613,7 @@ class OrbitalEntries{
     _log('in save');
     _log($entry);
 
-    if(array_key_exists('entry_id',$entry )&& $entry['entry_id'] ){
+    if(isset($entry['entry_id'])){
       //this is an update
       _log('sending to update');
       $resp = OrbitalEntries::update($entry);
@@ -596,14 +621,8 @@ class OrbitalEntries{
     else{
       $entry_id = null;
       //see if the entry exists using entry hash or guid?
-      if(array_key_exists('guid', $entry) && $entry['guid']){
+      if( isset($entry['guid'])){
         $entry_id = OrbitalEntries::check_guid($entry['guid']);
-        _log('check guid says entry id is');
-        _log($entry_id);
-      }
-      else{
-        _log("Orbital shouldn't see an entry without a guid from simplepie");
-        _log($entry);
       }
 
       if(null === $entry_id){
@@ -702,6 +721,7 @@ class OrbitalEntries{
 
   }
 
+  //OrbitalEntries::insert
   //assumes you have already checked that the entry isn't in there.
   //probably best if you just use save, it does the checking
   static function insert($entry){
@@ -751,6 +771,59 @@ class OrbitalEntries{
     return $resp;
 
   }
+  /*
+   * OrbitalEntries::link_to_users
+   * Take an entry and associate it to any users not currently associated with it.
+   * with an entry in user_entries
+   */
+  static function link_to_users($entry_id){
+    //TODO: SHOULD I EVEN DO THIS?
+
+  }
+  /*
+   * OrbitalEntries::unlink
+   * Remove any links from entries to a particular user
+   */
+  static function unlink($user_id=null, $feed_id=null){
+    global $wpdb;
+    global $tbl_prefix;
+    $user_entries = $wpdb->prefix.$tbl_prefix. "user_entries";
+    $entries = $wpdb->prefix.$tbl_prefix. "entries";
+    $wheres = array();
+    if( isset($user_id)){
+      $wheres['owner_uid'] = $user_id;
+    }
+    if( isset($feed_id )){
+      $wheres['feed_id'] = $feed_id;
+    }
+    if(count($wheres) <1){
+      //we don't want to remove ALL entries
+      return 0;
+    }
+    $retcount = $wpdb->delete($user_entries, $wheres, '%d');
+    OrbitalEntries::clean_entries();
+    return $retcount;
+  }
+  /* OrbitalEntries::clean_entries
+   * Clean up unviewable entries
+   * If an entry doesn't have any user_entry records associated, no one can see it.
+   * Kill it
+   */
+  static function clean_entries(){
+    global $wpdb;
+    global $tbl_prefix;
+    $user_entries = $wpdb->prefix.$tbl_prefix. "user_entries";
+    $entries = $wpdb->prefix.$tbl_prefix. "entries";
+    $sql = "
+      DELETE e
+      FROM $entries e
+      LEFT OUTER JOIN $user_entries ue
+        ON e.feed_id = ue.orig_feed_id
+      WHERE ue.feed_id IS NULL
+      ";
+    $wpdb->query($sql);
+  }
+
 
   /* Get entries for a feed
    *    - for a user, filter by a condition - unread = true..
@@ -879,7 +952,7 @@ function orbital_unsubscribe_feed(){
   
   $feed_id = filter_input(INPUT_POST, 'feed_id', FILTER_SANITIZE_NUMBER_INT);
 
-  $resp = OrbitalFeeds::remove($feed_id);
+  $resp = OrbitalFeeds::remove(null,$feed_id);
   echo json_encode($resp);
   exit;
 }
