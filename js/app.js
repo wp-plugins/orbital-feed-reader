@@ -66,7 +66,7 @@ var mainModule= angular.module('mainModule', ['ngSanitize','infinite-scroll','au
     }
   });
 
-mainModule.factory('feedService',   function($http){
+mainModule.factory('feedService',   function($http,$log){
   /*
    * The Feed Service should be the interface to feeds. 
    *
@@ -74,17 +74,19 @@ mainModule.factory('feedService',   function($http){
    * and ways to refresh the list, select the next feed, mark a feed read
    * or get the entries from a feed.
    */
-  // the currently selected feed
-  var _selectedFeed = null;
   // the list of feeds;
   var _feeds = [];
+  // the currently selected feed
+  var _selectedFeed = null;
   // feeds organized by tags
   var _tags = {};
   // a list of all tags for this user
   var _allTags = [];
   //is this service doing work?
   var _isLoading = false;
+  var _isEntriesLoading = false;
   var _sortOrder = "-1";
+  var _showRead = 0;
   var _showByTags = false;
   var _sortOptions = [
     { sortOrder: "-1",
@@ -94,6 +96,37 @@ mainModule.factory('feedService',   function($http){
       sortName: "Oldest First",
     },
   ];
+  //the current entries we've got stored for this feed
+  var _entries = [];
+  //if we have a current entry it will be here
+  var _selectedEntry = null;
+  getEntriesQualifier = function(feed){
+    var qualifier = '';
+    //If we aren't passed a feed filter, don't create one
+    if(null == feed ){
+      //qualifier =  'feed_id='+null;
+    }
+    else if(feed.feed_id && feed.feed_id >-1){
+      qualifier = '&feed_id='+feed.feed_id;
+      //if it has a feed_id, we can assume it is a feed
+    }
+    else if (feed.feed_id <0){
+      //handles special feeds
+      //
+      // -1 = ALL FEEDS
+
+    }
+    else {
+      //we should assume it is a tag
+      if('Untagged' == feed){
+        qualifier = '&tag='+null;
+      }
+      else{
+        qualifier = '&tag='+feed;
+      }
+    }
+    return qualifier;
+  };
 
   var feedservice =  {
     feeds : function(){
@@ -105,7 +138,9 @@ mainModule.factory('feedService',   function($http){
     isLoading : function(){
       return _isLoading;
     },
-
+    isEntriesLoading : function(){
+      return _isEntriesLoading;
+    },
     tags: function(){
       if(_tags.length == 0 && ! _isLoading ){ _refresh();}
       return _tags; 
@@ -113,6 +148,41 @@ mainModule.factory('feedService',   function($http){
     allTags: function(){
       return _allTags;
     },
+    entries: function(){
+      return _entries;
+    },
+    showRead: function(){
+      return _showRead;
+    },
+    selectedEntry: function(){
+      return _selectedEntry;
+    }, 
+    selectEntry: function(entry){
+      _selectedEntry = entry;
+    },
+
+    getFeedEntries: function(feed,showRead){
+      var qualifier = getEntriesQualifier(feed);
+      
+      $log.log('in getFeedEntries');
+      if(!showRead){
+        showRead=0;
+      }
+      _showRead=showRead;
+      _isEntriesLoading = true;
+      $http.get(opts.ajaxurl+'?action=orbital_get_entries'+qualifier+'&show_read='+_showRead +'&sort=' +_sortOrder)
+      .success(function(data){
+        _isEntriesLoading = false;
+        data = _.union(_entries,data);
+        data = _.unique(data,false, function(entry){return entry.entry_id;});
+        _entries = data
+        //scrollToEntry(_selectedEntry);
+      });
+
+    },
+
+
+
 
 
     // get the list of feeds from backend, inject a "fresh" feed.
@@ -121,6 +191,7 @@ mainModule.factory('feedService',   function($http){
       $http.get(opts.ajaxurl + '?action=orbital_get_feeds')
       .success( function( data ){
         //Here is our simple feed list
+        data = _.map(data, function(feed){ feed.is_private = feed['private']=='1'; return feed; });
         _feeds= data;
 
         //Now lets get a list of all the unique tags in those feeds
@@ -142,6 +213,7 @@ mainModule.factory('feedService',   function($http){
           feed_id:-1, //TODO start using neg integers for special feed ids
           feed_name:'All Feeds',
           unread_count:'',//TODO put in actual unread count;
+          is_private:'1',
         }
         _feeds.unshift(fresh);
 
@@ -160,6 +232,12 @@ mainModule.factory('feedService',   function($http){
     },
     select : function(feed, showRead){
       _selectedFeed = feed;
+      _entries = [];
+      _selectedEntry = null;
+      if(undefined != showRead){
+        _showRead = showRead;
+      }
+      this.getFeedEntries(feed,_showRead);
     },
     saveFeed: function(feed, successCallback){
       var data = {
@@ -168,7 +246,7 @@ mainModule.factory('feedService',   function($http){
         feed_url: feed.feed_url,
         feed_name: feed.feed_name,
         site_url: feed.site_url,
-        is_private: feed.private,
+        is_private: feed.is_private,
         tags: feed.tags,
       };
       $http.post(opts.ajaxurl,data)
@@ -220,11 +298,10 @@ mainModule.factory('feedService',   function($http){
     },
     saveSort: function(sortOrder, callback){
       feedservice.saveSetting({ sort_order: sortOrder },callback);
+      feedservice.select(_selectedFeed )
     },
     saveTagView: function(showTags, callback){
-      console.log('save tag view app ' + showTags);
       feedservice.saveSetting({show_by_tags:showTags},callback);
-      //_showByTags = showTags;
     },
   };
   return feedservice;
@@ -238,25 +315,20 @@ mainModule.run(function($rootScope){
    * use distinct event names to prevent browser explosion
    */
   $rootScope.$on('feedSelect',function(event, args){
-    //console.log('caught feedSelect!');
     $rootScope.$broadcast('feedSelected',args);
   });
   $rootScope.$on('feedEdit',function(event, args){
-    //console.log('caught feedEdit!');
     //Ugh, this should have a better name
     $rootScope.$broadcast('feedEditRequest',args);
   });
   //catch and broadcast entry changes
   $rootScope.$on('entryChange', function(event, args){
-    //console.log('caught entryChange!');
     $rootScope.$broadcast('entryChanged', args);
   });
   $rootScope.$on('newFeedRequested', function(event,args){
-    //console.log('caught newFeedRequested');
     $rootScope.$broadcast('subscriptionsWindow',args);
   });
   $rootScope.$on('feedSaved', function(event,args){
-    //console.log('the feeds are changing');
     $rootScope.$broadcast('updateFeed',args);
   });
   $rootScope.$on('commandBarEvent',function(event,args){

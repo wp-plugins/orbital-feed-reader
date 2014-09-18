@@ -3,7 +3,7 @@
 * Plugin Name: Orbital Feed Reader
 * Plugin URI: http://mattkatz.github.com/Orbital-Feed-Reader/
 * Description:A voracious feed reader
-* Version: 0.1.8.1
+* Version: 0.1.9
 * Author: Matt Katz
 * Author URI: http://www.morelightmorelight.com
 * License: GPL2
@@ -124,7 +124,10 @@ function section_one_callback() {
 }
 function field_one_callback() {
     $settings = (array) get_option( 'orbital-settings' );
-    $quote_text = esc_attr($settings['quote-text']);
+    $quote_text = false;
+    if(array_key_exists('quote-text',$settings)){
+      $quote_text = esc_attr($settings['quote-text']);
+    }
     echo "<input type='checkbox' name='orbital-settings[quote-text]' value=1 ". checked( 1, $quote_text, false ) . " />";
 }
 
@@ -229,7 +232,7 @@ function orbital_add_toolbar_items(){
     'id' => 'orbital-newest-first',
     'title' => 'Newest First',
     'href' => '#',
-    'parent' => 'orbital_sort',
+    'parent' => 'orbital-sort',
     'meta' => array('onclick' => 'changeSortOrder(-1);',
                     'title' => 'Sort Entries Newest First',),
   ));
@@ -237,7 +240,7 @@ function orbital_add_toolbar_items(){
     'id' => 'orbital-oldest-first',
     'title' => 'Oldest First',
     'href' => '#',
-    'parent' => 'orbital_sort',
+    'parent' => 'orbital-sort',
     'meta' => array('onclick' => 'changeSortOrder(1);',
                     'title' => 'Sort Entries Oldest First',),
   ));
@@ -298,20 +301,16 @@ function orbital_activate(){
 
 add_filter('query_vars','plugin_add_trigger');
 function plugin_add_trigger($vars) {
-  $vars[] = 'export_opml';
+  array_push($vars, 'export_opml');
   return $vars;
 }
 
 add_action('template_redirect', 'plugin_trigger_check');
 function plugin_trigger_check() {
-  if(0 == wp_get_current_user()->ID){
-    //not logged in - return;
-    return;
-  }
-  if(intval(get_query_var('export_opml')) == wp_get_current_user()->ID) {
-    require_once 'export_opml.php';
-    exit;
-  }
+    if(get_query_var('export_opml')){
+      require_once 'export_opml.php';
+      exit;
+    }
 }
 
 //Add settings page

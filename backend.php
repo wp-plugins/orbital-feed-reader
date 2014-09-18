@@ -60,7 +60,7 @@ class OrbitalFeeds {
               , private = %d
               WHERE id = %d
               AND owner = %d";
-      $sql = $wpdb->prepare($sql,$feed['feed_name'],$feed['site_url'],$feed['is_private'],$feed['feed_id'], $user_id);
+      $sql = $wpdb->prepare($sql,$feed['feed_name'],$feed['site_url'],$feed['is_private']?1:0,$feed['feed_id'], $user_id);
       $resp->feed_updated = $wpdb->query($sql);
       if(false=== $resp->feed_updated ) {
         $resp->update_error = $wpdb->print_error();
@@ -297,7 +297,7 @@ class OrbitalFeeds {
     $user_feeds = $wpdb->prefix.$tbl_prefix. "user_feeds ";
     $user_entries = $wpdb->prefix.$tbl_prefix. "user_entries ";
     $user_feed_tags = $wpdb->prefix.$tbl_prefix. "user_feed_tags ";
-    if(! $user_id)
+    if(! isset($user_id))
     { 
       $user_id =  get_current_user_id(); 
     }
@@ -525,6 +525,7 @@ class OrbitalFeeds {
   static function refresh($feed_id){
     //TODO update the feeds last updated time
     include_once(ABSPATH . WPINC . '/class-feed.php');
+    $resp = array();
     $feedrow = OrbitalFeeds::get_feed($feed_id);
 
     $feed = new SimplePie();
@@ -575,8 +576,8 @@ class OrbitalFeeds {
         array('id'=>$feed_id)//where filters
       );
     //echo $feedrow->feed_url;
-    $resp->feed_id = $feed_id;
-    $resp->updated = count($items);
+    $resp['feed_id'] = $feed_id;
+    $resp['updated'] = count($items);
     return $resp;
   }
 }
@@ -660,6 +661,7 @@ class OrbitalEntries{
     $user_feeds = $wpdb->prefix.$tbl_prefix. "user_feeds";
     $entries = $wpdb->prefix.$tbl_prefix. "entries";
     $feeds = $wpdb->prefix.$tbl_prefix. "feeds";
+    $resp = array();
 
     //try to update if the entry id exists, otherwise, insert
     //we should iterate over the keys and put them in the update
@@ -680,8 +682,8 @@ class OrbitalEntries{
       }
     }
     if(count($update_fields) <=0){
-      $resp->updated = 0;
-      $resp->message = "Nothing to update";
+      $resp['updated'] = 0;
+      $resp['message'] = "Nothing to update";
     }else{
 
       $ret = $wpdb->update(
@@ -689,13 +691,13 @@ class OrbitalEntries{
         $update_fields,//columns to update
         $filter_fields //where filters
       );
-      $resp->updated = $ret;
+      $resp['updated'] = $ret;
     }
     if(array_key_exists('entry_id',$entry )){
-      $resp->entry_id = $entry['entry_id'];
+      $resp['entry_id'] = $entry['entry_id'];
     }
     if(array_key_exists('feed_id',$entry)){
-      $resp->feed_id = $entry['feed_id'];
+      $resp['feed_id'] = $entry['feed_id'];
     }
     return $resp;
 
@@ -1051,7 +1053,6 @@ function orbital_save_feed(){
   $feed_url = filter_input(INPUT_POST, 'feed_url',FILTER_SANITIZE_STRING);
   $site_url = filter_input(INPUT_POST, 'site_url',FILTER_SANITIZE_STRING);
   $feed_name = filter_input(INPUT_POST, 'feed_name',FILTER_SANITIZE_STRING);
-  //$is_private = $_POST['is_private']=="true"?1:0;
   $is_private = filter_input(INPUT_POST, 'is_private',FILTER_SANITIZE_STRING);
   $tags = filter_input(INPUT_POST, 'tags', FILTER_SANITIZE_STRING);
 
