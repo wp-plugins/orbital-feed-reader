@@ -1,5 +1,5 @@
 /* Controllers */
-function FeedListCtrl($scope, $http, $log, feedService){
+function FeedListCtrl($scope, $log, feedService){
   $scope.showByTags = feedService.showByTags()
   $scope.editable = false;
   $scope.feeds = feedService.feeds();
@@ -58,44 +58,12 @@ function FeedListCtrl($scope, $http, $log, feedService){
     feedService.refresh(callback);
   };
 
-  $scope.feedUnreadCount = function(feed){
-    if(feed.feed_id == -1){ //All Feed
-      var allNum = _.reduce($scope.feeds, function(memo, countFeed){
-        if(countFeed.feed_id <0){return memo;}
-        num = parseInt(countFeed.unread_count,10);
-        return memo + num; }, 0);
-      return allNum;
-    }
-    return feed.unread_count;
-  }
-
-  $scope.tagUnreadCount = function(tagname){
-      feeds = $scope.tags[tagname];
-      return _.reduce(feeds,function(count, feed){
-        return count + parseInt(feed.unread_count,10);},0);
-    };
-
   /*
    * Get the next unread feed
    *
    */
   $scope.nextUnreadFeed = function(){
-    // We should iterate through the feeds
-    // Find our selected feed
-    // Then keep iterating till we find an unread feed
-    // If we reach the end of the list
-    // Start looking at the beginning till we find an unread feed
-    feeds = $scope.feeds;
-    index = feeds.indexOf(feedService.selectedFeed());
-    //we are starting at the index item
-    //and circling the array
-    for(i=(index+1)%feeds.length;i!=index;i= (i+1)%feeds.length){
-      if(feeds[i].unread_count >0){
-        return feeds[i];
-      }
-    }
-    //NOTHING! let's just return where we started
-    return feedService.selectedFeed();
+    return feedService.nextUnreadFeed();
   };
 
   /*
@@ -105,21 +73,7 @@ function FeedListCtrl($scope, $http, $log, feedService){
     $scope.editable = ! $scope.editable;
   }
   $scope.markRead = function(feed){
-    //console.log(feedService.selectedFeed());
-    if( null == feed){
-      feed = feedService.selectedFeed();
-    }
-    //mark feed read
-    var data = {
-      action: 'orbital_mark_items_read',
-      feed_id:feed.feed_id,
-    };
-    $http.post(opts.ajaxurl, data)
-    .success(function(response){
-      $scope.refresh();
-      $scope.select($scope.nextUnreadFeed());
-    });
-
+    feedService.markFeedRead(feed);
   }
 
   /*
@@ -127,23 +81,7 @@ function FeedListCtrl($scope, $http, $log, feedService){
    * TODO move this into the feedService
    */
   $scope.update = function(feed){
-    if(null == feed){
-      feed = feedService.selectedFeed();
-    }
-    //update feed 
-    var data= {
-      action: 'orbital_update_feed',
-      feed_id: feed.feed_id,
-    };
-    $http.post(opts.ajaxurl, data)
-    .success(function(response){
-      //refresh the feedlist
-      $scope.refresh();
-      //refresh the feed if it is still selected
-      if(feed == $scope.selectedFeed){
-        $scope.select(feed, $scope.showRead);
-      }
-    });
+    feedService.update(feed);
   }
   $scope.showReadItems = function(){
     //refresh this feed, but display read items
@@ -156,23 +94,6 @@ function FeedListCtrl($scope, $http, $log, feedService){
    */
 
   /*
-   * Has an entry changed? Update our feedlist
-   */
-  $scope.$on('entryChanged', function(event,args){
-    //find the feed entry that has this entry's feed_id
-    entry = args.entry;
-    feed_id = entry.feed_id;
-    //Look down the list of feeds for the one this entry belongs to
-    for( i = 0; i < $scope.feeds.length; i++){
-      feed = $scope.feeds[i];
-      if( feed.feed_id ==  entry.feed_id){
-        //decrement the read counter by the isread status
-        feed.unread_count = Number(feed.unread_count ) + (entry.isRead ? -1:1);
-      }
-    }
-  });
-
-  /*
    * We should just get the feeds from the DB.
    */
   $scope.$on('refreshFeeds', function(event,args){
@@ -183,8 +104,111 @@ function FeedListCtrl($scope, $http, $log, feedService){
   });
   
 }
+function CliCtrl($scope, $filter,$timeout,feedService){
+  $scope.reveal = false;
+  $scope.selectedFeed = null;
+  $scope.feeds = feedService.feeds();
+  //$scope.filteredFeeds = $filter('filter')(feedService.feeds(),$scope.filterstring);
+  $scope.filteredFeeds = function(){
+    return $filter('filter')(feedService.feeds(),{'feed_name':$scope.filterstring});
+  };
+  $scope.tags = feedService.tags();
+  $scope.filterstring = null;
+  $scope.$watch(feedService.tags,function(newValue){
+    //console.log('listener');
+    $scope.tags = newValue;
+  });
+  $scope.toggleReveal = function(){
+    $scope.reveal=! $scope.reveal;
+    $scope.filterstring = null;
+    $scope.selectedFeed = null;
+  };
+  $scope.nextResult = function(){
+    feeds = $scope.filteredFeeds();
+    //if no feeds, there can be no selected result
+    if(feeds.length <= 0){
+      $scope.selectedFeed = null;
+      return;
+    }
+    index = feeds.indexOf($scope.selectedFeed);
+    if(index <0){ //selectedFeed is null or not in the list
+      $scope.selectedFeed = feeds[0];
+      return;
+    }
+    if (index < feeds.length -1){
+      $scope.selectedFeed = feeds[index+1];
+    }
+  };
+  $scope.prevResult = function(){
+    feeds = $scope.filteredFeeds();
+    if(feeds.length<=0){
+      $scope.selectedFeed = null;
+      return;
+    }
+    index = feeds.indexOf($scope.selectedFeed);
+    if(index <0){ //selectedFeed is null or not in the list
+      $scope.selectedFeed = feeds[0];
+      return;
+    }
+    if (index > 0){
+      $scope.selectedFeed = feeds[index-1];
+    }
+  };
+  $scope.select = function(feed){
+    feedService.select(feed);
+    $scope.toggleReveal();
+  };
+  $scope.setSelectedFeedIfNull = function(){
+    var filtFeeds = $scope.filteredFeeds();
+    if (! _.contains(filtFeeds,$scope.selectedFeed)){
+      $scope.selectedFeed = filtFeeds[0];
+    }
+  };
+  $scope.processKeys = function($event){
+    $scope.setSelectedFeedIfNull();
+    var enter = 13, tab = 9, esc = 27, up = 38, down = 40, left = 37, right = 39;
+    //cancel other handlers if we've got it
+    //if up/down/escape and we have results
+    //or if enter/tab and we have results and one has been selected
+    if( ([enter,tab,esc,up,down].indexOf($event.keyCode) != -1) &&
+      (([enter,tab].indexOf($event.keyCode) ==-1)|| $scope.selectedFeed)){
+        if($event.stopImmediatePropagation) $event.stopImmediatePropagation();
+        if($event.preventDefault) $event.preventDefault();
+        if($event.stopPropagation) $event.stopPropagation();
+        if($event.cancelBubble) $event.cancelBubble = true;
+    }else{
+      //$scope.toggleReveal();
+      return;
+    }
+    switch($event.keyCode){
+      case up:
+        $scope.prevResult();
+        break;
+      case tab:
+      case down:
+        $scope.nextResult();
+        break;
+      case enter:
+        $event.stopImmediatePropagation();
+        $scope.select($scope.selectedFeed);
+        $event.target.blur();
+        break;
+      case esc:
+        $event.stopImmediatePropagation();
+        //hide the results or empty them
+        $scope.toggleReveal();
+        //deselect the input element so we don't send more input there.
+        $event.target.blur();
+        break;
+    }
+  };
 
-function EntriesCtrl($scope, $http, $log,feedService){
+  key('g', function(event,handler){
+    $scope.$apply(function(){$scope.toggleReveal()});
+  });
+
+}
+function EntriesCtrl($scope, $log,feedService){
   $scope.selectedEntry = null;
   $scope.isRead = false;
   $scope.entries = [];
@@ -218,6 +242,7 @@ function EntriesCtrl($scope, $http, $log,feedService){
   };
 
   $scope.selectFeed = function(entry){
+    console.log('selecting feed');
     feedService.select(feedService.getFeed(entry.feed_id));
   }
 
@@ -271,22 +296,14 @@ function EntriesCtrl($scope, $http, $log,feedService){
    * toggle the entry's read status
    */
   $scope.setReadStatus = function( entry, status){
-    entry.isLoading = true;
-    var newReadStatus = status || (entry.isRead == 0?1:0);
-    var data = {
-      action: 'orbital_mark_item_read',
-      read_status: newReadStatus ,
-      entry_id: entry.entry_id,
-    };
-    //Mark the entry read on the server
-    $http.post(opts.ajaxurl,data)
-    .success(function(data){
-      //mark the entry as read in the UI
-      entry.isRead= entry.isRead == 0 ? 1:0;
-      entry.isLoading = false;
-      //tell the feed list that the entry was toggled read.
-      $scope.$emit('entryChange', {entry:entry});
-    });
+    feedService.setEntryReadStatus(entry,status);
+  }
+
+  /*
+   * call up the edit window for this feed
+   */
+  $scope.editFeed = function(feed){
+    $scope.$emit('feedEdit', {feed:feed});
   }
 
   /*
@@ -302,8 +319,8 @@ function EntriesCtrl($scope, $http, $log,feedService){
       $scope.setReadStatus(entry);
     }
   }
-  $scope.getFeedName = function (entry){
-    return feedService.getFeedName(entry.feed_id);
+  $scope.getFeedFromEntry = function (entry){
+    return feedService.getFeedFromEntry(entry);
   }
   $scope.displayFeed(null,$scope.isRead);
   //$scope.displayFeed();
@@ -419,16 +436,9 @@ function SubsCtrl($scope,$http,$log,feedService ){
     if(url){
       $scope.urlCandidate = url;
     }
-    //now we should check the candidate
-    var data = {
-      action: 'orbital_find_feed',
-      url: $scope.urlCandidate,
-    };
     $scope.isLoading=true;
-    //ask the backend to look at it
-    $http.post(opts.ajaxurl,data)
-    .success(function(response){
-      $scope.isLoading=false;
+    feedService.checkUrl($scope.urlCandidate,function(response){
+      $scope.isLoading = false;
       if("feed" == response.url_type){
         //console.log('found a feed!');
         //if it returns a feed detail, display that.
@@ -464,7 +474,6 @@ function SubsCtrl($scope,$http,$log,feedService ){
       }
     });
   }
-  
   /*
    * Remove a tag from a feedCandidate
    */
@@ -511,15 +520,9 @@ function SubsCtrl($scope,$http,$log,feedService ){
     //Maybe it could just be to call the save again
     $scope.isLoading = true;
     $log.info(feed);
-    var data = {
-      action: 'orbital_unsubscribe_feed',
-      feed_id: feed.feed_id,
-    };
-    $http.post(opts.ajaxurl,data)
-    .success(function(response){
+    feedService.unsubscribe(feed, function (response){
       //unmark the busy 
       $scope.isLoading = false;
-      $scope.feedsChanged();
       //close the dialogue
       $scope.close();
       $scope.feedsChanged();
@@ -672,13 +675,16 @@ function SubsCtrl($scope,$http,$log,feedService ){
     feedService.refresh();
   }
 
+  $scope.editFeed = function(feed){
+    $scope.reveal = true;
+    $scope.feedCandidate = feed;
+  }
+
   //We are going to edit a feed
   //it becomes the feedCandidate so we can edit it there.
   //TODO we should copy the feed, not use the one in the feedlist
   $scope.$on('feedEditRequest', function(event,args){
-    //$log.info('feedEdit');
-    $scope.reveal=true;
-    $scope.feedCandidate = args.feed;
+    $scope.editFeed(args.feed);
   });
 }
 

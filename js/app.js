@@ -4,7 +4,6 @@ var mainModule= angular.module('mainModule', ['ngSanitize','infinite-scroll','au
   // Angular's POST isn't natively undestood by PHP
   // fix via: http://victorblog.com/2012/12/20/make-angularjs-http-service-behave-like-jquery-ajax/
   $httpProvider.defaults.headers.post['Content-Type'] = 'application/x-www-form-urlencoded;charset=utf-8';
- 
   // Override $http service's default transformRequest
   $httpProvider.defaults.transformRequest = [function(data)
   {
@@ -12,7 +11,7 @@ var mainModule= angular.module('mainModule', ['ngSanitize','infinite-scroll','au
      * The workhorse; converts an object to x-www-form-urlencoded serialization.
      * @param {Object} obj
      * @return {String}
-     */ 
+     */
     var param = function(obj)
     {
       var query = '';
@@ -65,12 +64,39 @@ var mainModule= angular.module('mainModule', ['ngSanitize','infinite-scroll','au
       //return _.compact(String.split(input,sep));
     }
   });
+//via https://stackoverflow.com/a/14837021/13774
+mainModule.directive('focusMe', function($timeout, $parse) {
+  return {
+    //scope: true,   // optionally create a child scope
+    link: function(scope, element, attrs) {
+      var model = $parse(attrs.focusMe);
+      scope.$watch(model, function(value) {
+        console.log('value=',value);
+        if(value === true) {
+          $timeout(function() {
+            element[0].focus();
+          });
+        }
+      });
+      // to address @blesh's comment, set attribute value to 'false'
+      // on blur event:
+      element.bind('blur', function() {
+         console.log('blur');
+         //model.assign(scope,false);
+         //scope.$apply(model.assign(scope, false));
+      });
+    }
+  };
+});
 
+mainModule.factory('nonceService', function($http, $log){
+
+});
 mainModule.factory('feedService',   function($http,$log){
   /*
-   * The Feed Service should be the interface to feeds. 
+   * The Feed Service should be the interface to feeds.
    *
-   * It maintains a list of feeds, a pointer to a current feed, 
+   * It maintains a list of feeds, a pointer to a current feed,
    * and ways to refresh the list, select the next feed, mark a feed read
    * or get the entries from a feed.
    */
@@ -143,7 +169,7 @@ mainModule.factory('feedService',   function($http,$log){
     },
     tags: function(){
       if(_tags.length == 0 && ! _isLoading ){ _refresh();}
-      return _tags; 
+      return _tags;
     },
     allTags: function(){
       return _allTags;
@@ -156,21 +182,20 @@ mainModule.factory('feedService',   function($http,$log){
     },
     selectedEntry: function(){
       return _selectedEntry;
-    }, 
+    },
     selectEntry: function(entry){
       _selectedEntry = entry;
     },
 
     getFeedEntries: function(feed,showRead){
       var qualifier = getEntriesQualifier(feed);
-      
       $log.log('in getFeedEntries');
       if(!showRead){
         showRead=0;
       }
       _showRead=showRead;
       _isEntriesLoading = true;
-      $http.get(opts.ajaxurl+'?action=orbital_get_entries'+qualifier+'&show_read='+_showRead +'&sort=' +_sortOrder)
+      $http.get(ajaxurl+'?action=orbital_get_entries'+qualifier+'&show_read='+_showRead +'&sort=' +_sortOrder + '&orbital_actions_nonce=' + opts.orbital_actions_nonce)
       .success(function(data){
         _isEntriesLoading = false;
         data = _.union(_entries,data);
@@ -181,17 +206,81 @@ mainModule.factory('feedService',   function($http,$log){
 
     },
 
+    /*
+     * update this feed
+     */
+    update: function(feed){
+      if( null == feed){
+        feed = _selectedFeed;
+      }
+      //update feed
+      var data= {
+        orbital_actions_nonce: opts.orbital_actions_nonce,
+        action: 'orbital_update_feed',
+        feed_id: feed.feed_id,
+      };
+      $http.post(ajaxurl, data)
+      .success(function(response){
+        //refresh the feedlist
+        feedservice.refresh();
+        //refresh the feed if it is still selected
+        if(feed == _selectedFeed){
+          feedservice.select(feed, feedservice.showRead);
+        }
+      });
+    },
 
 
+    /*
+     * Marks all the entries in a feed as read
+     */
+    markFeedRead: function(feed){
+      if( null == feed){
+        feed = _selectedFeed;
+      }
+      //mark feed read
+      var data = {
+        orbital_actions_nonce: opts.orbital_actions_nonce,
+        action: 'orbital_mark_items_read',
+        feed_id:feed.feed_id,
+      };
+      $http.post(ajaxurl, data)
+      .success(function(response){
+        feedservice.refresh();
+        feedservice.select(feedservice.nextUnreadFeed());
+      });
+    },
 
+    nextUnreadFeed: function(){
+      // We should iterate through the feeds
+      // Find our selected feed
+      // Then keep iterating till we find an unread feed
+      // If we reach the end of the list
+      // Start looking at the beginning till we find an unread feed
+      index = _feeds.indexOf(_selectedFeed);
+      //we are starting at the index item
+      //and circling the array
+      for(i=(index+1)%_feeds.length;i!=index;i= (i+1)%_feeds.length){
+        if(_feeds[i].unread_count >0){
+          return _feeds[i];
+        }
+      }
+      //NOTHING! let's just return where we started
+      return _selectedFeed;
+    },
 
     // get the list of feeds from backend, inject a "fresh" feed.
     refresh : function refresh(callback){
       _isLoading = true;
-      $http.get(opts.ajaxurl + '?action=orbital_get_feeds')
+      $http.get(ajaxurl + '?action=orbital_get_feeds' + '&orbital_actions_nonce=' + opts.orbital_actions_nonce)
       .success( function( data ){
         //Here is our simple feed list
-        data = _.map(data, function(feed){ feed.is_private = feed['private']=='1'; return feed; });
+        data = _.map(data,
+                     function(feed){
+                       feed.is_private = feed['private']=='1';
+                       feed.unreadCount= function(){return feed.unread_count;};
+                       return feed;
+                     });
         _feeds= data;
 
         //Now lets get a list of all the unique tags in those feeds
@@ -206,13 +295,26 @@ mainModule.factory('feedService',   function($http,$log){
           _tags[tag] = _.filter(_feeds,function(feed){
                           return _.contains(feed.tags.split(","),tag);
                         });
-        })
-        //We have to do this AFTER the tag building 
+          _tags[tag].unreadCount = function(){
+            return _.reduce(_tags[tag],
+                          function(count, feed){
+                            return count + parseInt(feed.unread_count,10);
+                          },0);
+          };
+        });
+        //We have to do this AFTER the tag building
         //because this has no tags and throws an exception
         var fresh = {
           feed_id:-1, //TODO start using neg integers for special feed ids
           feed_name:'All Feeds',
           unread_count:'',//TODO put in actual unread count;
+          unreadCount: function(){
+            var allNum = _.reduce(_feeds, function(memo, countFeed){
+              if(countFeed.feed_id <0){return memo;}
+              num = parseInt(countFeed.unread_count,10);
+              return memo + num; }, 0);
+            return allNum;
+          },
           is_private:'1',
         }
         _feeds.unshift(fresh);
@@ -224,7 +326,7 @@ mainModule.factory('feedService',   function($http,$log){
         }
       });
 
-      $http.get(opts.ajaxurl + '?action=orbital_get_user_settings')
+      $http.get(ajaxurl + '?action=orbital_get_user_settings' + '&orbital_actions_nonce=' + opts.orbital_actions_nonce)
       .success(function(data){
         _sortOrder = data['sort_order'] || _sortOrder;
         _showByTags = data['show_by_tags'];
@@ -241,6 +343,7 @@ mainModule.factory('feedService',   function($http,$log){
     },
     saveFeed: function(feed, successCallback){
       var data = {
+        orbital_actions_nonce: opts.orbital_actions_nonce,
         action: 'orbital_save_feed',
         feed_id: feed.feed_id,
         feed_url: feed.feed_url,
@@ -249,7 +352,7 @@ mainModule.factory('feedService',   function($http,$log){
         is_private: feed.is_private,
         tags: feed.tags,
       };
-      $http.post(opts.ajaxurl,data)
+      $http.post(ajaxurl,data)
       .success(function(response){
         if(successCallback){ successCallback(response, data);}
         feedservice.refresh();
@@ -259,13 +362,17 @@ mainModule.factory('feedService',   function($http,$log){
     getFeed: function(feed_id){
       return _.find(_feeds, function(feed){return feed.feed_id == feed_id});
     },
-    getFeedName: function(feed_id){
-      var feed = _.find(_feeds, function(feed){return feed.feed_id == feed_id});
+    getFeedFromEntry: function(entry){
+      var feed_id = entry.feed_id;
+      var feed = _.find(_feeds, function(feed){
+        return feed.feed_id == feed_id}
+      );
       if (feed){
-        return feed.feed_name;
+        return feed;
       }else{
         return null;
       }
+
     },
     selectedFeed: function(){
       if(! _selectedFeed) {_selectedFeed = _feeds[0];}
@@ -282,13 +389,14 @@ mainModule.factory('feedService',   function($http,$log){
     },
     saveSetting: function(setting, callback){
       var data = {
+        orbital_actions_nonce: opts.orbital_actions_nonce,
         action: 'orbital_set_user_settings',
         orbital_settings: setting ,
       };
       //console.log('And app thinks data is : ' + _sortOrder );
-      $http.post(opts.ajaxurl, data)
+      $http.post(ajaxurl, data)
       .success(function(response){
-        //Store the settings 
+        //Store the settings
         _showByTags = response['show_by_tags'] || _showByTags;
         _sortOrder = response['sort_order']|| _sortOrder;
         if(callback){
@@ -303,14 +411,68 @@ mainModule.factory('feedService',   function($http,$log){
     saveTagView: function(showTags, callback){
       feedservice.saveSetting({show_by_tags:showTags},callback);
     },
+    setEntryReadStatus: function(entry,status){
+      entry.isLoading = true;
+      var newReadStatus = status || (entry.isRead == 0?1:0);
+      var data = {
+        orbital_actions_nonce: opts.orbital_actions_nonce,
+        action: 'orbital_mark_item_read',
+        read_status: newReadStatus ,
+        entry_id: entry.entry_id,
+      };
+      //Mark the entry read on the server
+      $http.post(ajaxurl,data)
+      .success(function(data){
+        //mark the entry as read in the UI
+        entry.isRead= entry.isRead == 0 ? 1:0;
+        entry.isLoading = false;
+
+        //tell the feed list that the entry was toggled read.
+        feed = feedservice.getFeedFromEntry(entry);
+        //decrement the feed read counter by the isread status
+        feed.unread_count = Number(feed.unread_count ) + (entry.isRead ? -1:1);
+      });
+
+    },
+
+    /*
+     * feed a url to the backend for checking
+     * We should see wither a feed response or a list of possible feeds at that url
+     */
+    checkUrl: function(urlIn,callback){
+      //now we should check the candidate
+      var data = {
+        orbital_actions_nonce: opts.orbital_actions_nonce,
+        action: 'orbital_find_feed',
+        url: urlIn,
+      };
+      //ask the backend to look at it
+      $http.post(ajaxurl,data)
+      .success(function(response){
+        callback(response);
+      });
+    },
+    /*
+     * unsubscribe from a feed
+     */
+    unsubscribe: function(feed, callback){
+      var data = {
+        orbital_actions_nonce: opts.orbital_actions_nonce,
+        action: 'orbital_unsubscribe_feed',
+        feed_id: feed.feed_id,
+      };
+      $http.post(ajaxurl,data)
+      .success(function(response){
+        callback(response);
+      });
+
+    },
   };
   return feedservice;
-
-  
 });
 
 mainModule.run(function($rootScope){
-  /* 
+  /*
    * receive the emitted messages and rebroadcast
    * use distinct event names to prevent browser explosion
    */
@@ -322,9 +484,6 @@ mainModule.run(function($rootScope){
     $rootScope.$broadcast('feedEditRequest',args);
   });
   //catch and broadcast entry changes
-  $rootScope.$on('entryChange', function(event, args){
-    $rootScope.$broadcast('entryChanged', args);
-  });
   $rootScope.$on('newFeedRequested', function(event,args){
     $rootScope.$broadcast('subscriptionsWindow',args);
   });
