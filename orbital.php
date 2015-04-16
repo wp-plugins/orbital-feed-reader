@@ -3,9 +3,10 @@
 * Plugin Name: Orbital Feed Reader
 * Plugin URI: http://mattkatz.github.com/Orbital-Feed-Reader/
 * Description:A voracious feed reader
-* Version: 0.2
+* Version: 0.2.1
 * Author: Matt Katz
 * Author URI: http://www.morelightmorelight.com
+* Text Domain: orbital-reader
 * License: GPL2
 * */
 global $orbital_slug;
@@ -14,6 +15,8 @@ global $orbital_settings_slug;
 $orbital_settings_slug = 'orbital_plugin_settings';
 global $orbital_db_version ;
 $orbital_db_version = '0.1.6';
+global $orbital_sample_data_opt_string;
+$orbital_sample_data_opt_string = 'orbital_sample_data_loaded';
 global $orbital_samples_version ;
 $orbital_samples_version = '0.1.6';
 global $orbital_db_version_opt_string;
@@ -32,6 +35,7 @@ add_action('plugins_loaded', 'orbital_update_db_check');
 function orbital_update_db_check(){
   global $orbital_db_version;
   global $orbital_db_version_opt_string;
+  load_plugin_textdomain( 'orbital-reader', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' ); 
   if(get_site_option($orbital_db_version_opt_string) != $orbital_db_version){
     //upgrayedd the db
     //_log("orbital: Installing or Upgrayedding Database");
@@ -44,19 +48,20 @@ function orbital_update_db_check(){
 add_action('plugins_loaded', 'orbital_sample_data_check');
 function orbital_sample_data_check(){
   global $orbital_samples_version ;
-  //_log('check for sampledata');
-  $samples_loaded = get_site_option('orbital_sample_data_loaded');
-  //_log("Are the samples loaded: $samples_loaded ");
+  global $orbital_sample_data_opt_string;
+  _log("check for sampledata $orbital_samples_version");
+  $samples_loaded = get_site_option($orbital_sample_data_opt_string);
+  _log("Are the samples loaded: $samples_loaded ");
   if( $samples_loaded !== $orbital_samples_version)
   {
     _log("orbital: Installing Sample Data");
     require_once 'install_upgrade.php';
     orbital_install_data();
     //TODO: should this be inside the install data function?
-    update_option('orbital_sample_data_loaded', $orbital_samples_version);
+    update_option($orbital_sample_data_opt_string, $orbital_samples_version);
   }
   else{
-    //_log('Sample Data already in there, never mind');
+    _log('Sample Data already in there, never mind');
 
   }
 }
@@ -103,6 +108,9 @@ function orbital_icon_style(){
       width:16px;
     }
     </style>';
+}
+add_action('init', 'orbital_overall_init');
+function orbital_overall_init(){
 }
 
 
@@ -191,52 +199,52 @@ function orbital_add_toolbar_items(){
   if(null == $cur_scr || $orbital_main != $cur_scr->id){return;}
   $wp_admin_bar->add_node(array(
     'id' => 'orbital-mark-as-read',
-    'title' => '<span class="ab-icon"></span><span class="ab-label">Mark All as Read</span>',
+    'title' => '<span class="ab-icon"></span><span class="ab-label">'. __('Mark All as Read','orbital-reader') . '</span>',
     'href' => '#',
     'meta' => array('onclick' => 'markFeedRead();',
-                    'title' => 'Mark All as Read',
+                    'title' => __(  'Mark All as Read', 'orbital-reader '),
                     'class' => 'orbital-entries-command',),
   ));
   $wp_admin_bar->add_node(array(
     'id' => 'orbital-update-feed',
-    'title' => '<span class="ab-icon"></span><span class="ab-label">Update Feed</span>',
+    'title' => '<span class="ab-icon"></span><span class="ab-label">'. __('Update Feed','orbital-reader') . '</span>',
     'href' => '#',
     'meta' => array('onclick' => 'updateFeed();',
-                    'title' => 'Update Current Feed',
+                    'title' =>__(  'Update Current Feed' , 'orbital-reader'),
                     'class' => 'orbital-entries-command',),
   ));
   $wp_admin_bar->add_node(array(
     'id' => 'orbital-show-read-items',
-    'title' => '<span class="ab-icon"></span><span class="ab-label">Toggle Read Items</span>',
+    'title' => '<span class="ab-icon"></span><span class="ab-label">' . __('Toggle Read Items', 'orbital-reader').'</span>',
     'href' => '#',
     'meta' => array('onclick' => 'showRead();',
-                    'title' => 'Toggle Showing Read Items',
+                    'title' => __('Toggle Read Items', 'orbital-reader'),
                     'class' => 'orbital-entries-command',),
   ));
 
   $wp_admin_bar->add_node(array(
     'id' => 'orbital-sort',
-    'title' => '<span class="ab-icon"></span><span class="ab-label">Sort</span>',
+    'title' => '<span class="ab-icon"></span><span class="ab-label">'. __('Sort', 'orbital-reader') . '</span>',
     'href' => '#',
     'meta' => array('onclick' => 'changeSortOrder();',
-                    'title' => 'Toggle Entries Sort Order',
+                    'title' => __('Toggle Entries Sort Order', 'orbital-reader'),
                     'class' => 'orbital-entries-command',),
   ));
   $wp_admin_bar->add_node(array(
     'id' => 'orbital-newest-first',
-    'title' => 'Newest First',
+    'title' => __('Newest First', 'orbital-reader'),
     'href' => '#',
     'parent' => 'orbital-sort',
     'meta' => array('onclick' => 'changeSortOrder(-1);',
-                    'title' => 'Sort Entries Newest First',),
+                    'title' => __('Sort Entries Newest First', 'orbital-reader'),),
   ));
   $wp_admin_bar->add_node(array(
     'id' => 'orbital-oldest-first',
-    'title' => 'Oldest First',
+    'title' => __('Oldest First','orbital-reader'),
     'href' => '#',
     'parent' => 'orbital-sort',
     'meta' => array('onclick' => 'changeSortOrder(1);',
-                    'title' => 'Sort Entries Oldest First',),
+                    'title' => __('Sort Entries Oldest First','orbital-reader'),),
   ));
 }
 
@@ -257,10 +265,12 @@ function orbital_uninstall_db()
 
   //We should remove the DB option for the db version
   delete_option($orbital_db_version_opt_string);
+  delete_option($orbital_settings_slug );
+  delete_option($orbital_sample_data_opt_string);
   //clean up all the tables
   global $wpdb;
   global $tbl_prefix;
-  $tables =array('feeds','user_feeds','entries','user_entries');
+  $tables =array('feeds','user_feeds','entries','user_entries','tags','user_feed_tags');
   foreach($tables as $table){
     $sql = "DROP TABLE ". $wpdb->prefix.$tbl_prefix.$table.";";
     $wpdb->query($sql);

@@ -322,7 +322,7 @@ function orbital_install_instructional_entries($orbitalfeed){
 function orbital_add_sample_feeds_to_user($user_id){
     if(! user_can($user_id,'edit_posts')){
       // if this user can't author posts, then we don't want to offer them a feed reader
-      continue;
+      return;
     }
     //install some sample feeds
     _log("installing sample feeds for $user_id");
@@ -345,7 +345,6 @@ function orbital_add_sample_feeds_to_user($user_id){
     'tags'=>'orbital,mutants',
     'owner'=>$user_id,
     'feed_name' =>'More Light! More Light!'));
-    
 
     OrbitalFeeds::save(
     array(
@@ -412,16 +411,6 @@ function orbital_add_sample_feeds_to_user($user_id){
       OrbitalFeeds::link_old_entries($user_id);
     }
 }
-/*
-function orbital_uninstall_db()
-{
-  //We should remove the DB option for the db version
-  delete_option('orbital_db_version');
-  //TODO clean up all the tables
-  global $wpdb;
-  $sql = "DROP TABLE ". $wpdb->prefix.$tbl_prefix."feeds;";
-  $wpdb->query($sql);
 
-}*/
 
 ?>
